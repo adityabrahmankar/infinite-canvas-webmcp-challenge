@@ -10,6 +10,7 @@ import {
   modelHasVision,
   PROMPT_CHIPS,
   type AgentCanvasContext,
+  type AgentChatMessage,
   type AgentImage,
   type AgentToolCall,
   type AgentTurnResponse,
@@ -22,14 +23,23 @@ import {
   createMessageActions,
   createThinkingIndicator,
   createToolCall,
-  createToolGroup,
+  createToolTimeline,
   markCopied,
   paintAgentStatus,
   toolDisplayName,
 } from './agent-ui';
 import { store } from './store';
 import { DESTRUCTIVE_TOOLS } from './tool-catalog';
+import {
+  clearAgentThread,
+  loadAgentThread,
+  saveAgentThread,
+  threadTurnsFromMessages,
+  type PersistedAgentTurn,
+  type PersistedTurnBlock,
+} from './persist';
 import type { DocumentSnapshot } from './types';
+import { RATE_LIMIT_MESSAGE } from '../worker/limits';
 
 const VISITOR_KEY = 'infinite-canvas-agent-visitor';
 const AUTO_KEY = 'infinite-canvas-agent-auto-approve';
@@ -46,6 +56,7 @@ interface ChatTurn {
   images: AgentImage[];
   contextLabel: string;
   snapshot: DocumentSnapshot;
+  blocks: PersistedTurnBlock[];
   root: HTMLElement;
   userNode: HTMLElement;
 }
@@ -96,8 +107,18 @@ function modelMeta(id: string) {
 function userFacingAgentError(message: string | undefined, fallback: string): string {
   const text = (message || '').trim();
   if (!text) return fallback;
+  if (/codex's in-app browser/i.test(text)) return text;
+  if (/too many attempts|already used the \d+ agent requests/i.test(text)) return RATE_LIMIT_MESSAGE;
   if (/wrangler|pnpm|ai_gateway|worker|dev:worker|npx vercel|api key|http \d+/i.test(text)) return fallback;
   return text.length > 120 ? fallback : text;
+}
+
+function paintQuotaHint(locked: boolean): void {
+  const hint = document.getElementById('agent-quota-hint');
+  if (!hint) return;
+  const show = locked && !lastUnlimited;
+  hint.hidden = !show;
+  if (show) hint.textContent = RATE_LIMIT_MESSAGE;
 }
 
 function agentFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -184,6 +205,31 @@ function startEdit(turn: ChatTurn): void {
   textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 }
 
+function persistThread(): void {
+  if (!chatTurns.length) {
+    clearAgentThread();
+    return;
+  }
+  saveAgentThread(chatTurns.map((turn) => ({
+    id: turn.id,
+    message: turn.message,
+    images: turn.images,
+    contextLabel: turn.contextLabel,
+    blocks: turn.blocks,
+  })));
+}
+
+async function rewindWorkerThread(): Promise<void> {
+  try {
+    await agentFetch('/api/agent/rewind', {
+      method: 'POST',
+      body: JSON.stringify({ userTurns: chatTurns.length }),
+    });
+  } catch {
+    // Local transcript is already the source of truth for the UI.
+  }
+}
+
 function undoTurn(turn: ChatTurn): void {
   if (sending) return;
   cancelEdit();
@@ -191,6 +237,8 @@ function undoTurn(turn: ChatTurn): void {
   if (index < 0) return;
   store.restoreSnapshot(turn.snapshot);
   for (const entry of chatTurns.splice(index)) entry.root.remove();
+  persistThread();
+  void rewindWorkerThread();
 }
 
 function resetLocalChat(): void {
@@ -205,6 +253,7 @@ function resetLocalChat(): void {
   }
   setAgentLive({ state: 'idle' });
   applyComposerLock();
+  clearAgentThread();
 }
 
 async function startNewChat(): Promise<void> {
@@ -340,6 +389,7 @@ function setQuota(el: HTMLElement, remaining: number, used: boolean, unlimited =
 
 function lockComposer(locked: boolean): void {
   quotaLocked = locked;
+  paintQuotaHint(locked);
   applyComposerLock();
 }
 
@@ -432,18 +482,23 @@ async function executeCalls(
   autoApprove: boolean,
   thread: HTMLElement,
   bumpThinking: () => void,
+  timeline: ReturnType<typeof createToolTimeline>,
+  turn: ChatTurn,
 ): Promise<Array<{ id: string; name: string; result: unknown }>> {
   const results: Array<{ id: string; name: string; result: unknown }> = [];
-  const group = createToolGroup();
-  thread.append(group.root);
-  group.setActive(true);
+  const block: Extract<PersistedTurnBlock, { type: 'tools' }> = { type: 'tools', steps: [] };
+  turn.blocks.push(block);
+  timeline.setActive(true);
   bumpThinking();
   for (const call of calls) {
     if (DESTRUCTIVE_TOOLS.has(call.name) && !autoApprove) {
       const approved = await waitForApproval(call.name, call.arguments, thread);
       bumpThinking();
       if (!approved) {
-        results.push({ id: call.id, name: call.name, result: { skipped: true } });
+        const skipped = { skipped: true };
+        block.steps.push({ name: call.name, arguments: call.arguments, result: compactToolResult(skipped), ok: false });
+        results.push({ id: call.id, name: call.name, result: skipped });
+        persistThread();
         continue;
       }
     }
@@ -453,11 +508,13 @@ async function executeCalls(
       nodeIds: nodeIdsFromToolArgs(call.arguments, [...store.selectedIds]),
     });
     const row = createToolCall(call.name, call.arguments);
-    group.body.append(row.root);
+    timeline.body.append(row.root);
     bumpThinking();
     try {
       const ran = await runCanvasTool(call.name, call.arguments);
-      row.settle(compactToolResult(ran.result), ran.ok);
+      const compact = compactToolResult(ran.result);
+      row.settle(compact, ran.ok);
+      block.steps.push({ name: call.name, arguments: call.arguments, result: compact, ok: ran.ok });
       setAgentLive({
         state: 'working',
         label: toolDisplayName(call.name),
@@ -466,14 +523,16 @@ async function executeCalls(
       const dataUrl = (call.name === 'capture_preview' && ran.result && typeof ran.result === 'object' && typeof (ran.result as Record<string, unknown>).dataUrl === 'string')
         ? (ran.result as Record<string, unknown>).dataUrl as string
         : undefined;
-      results.push({ id: call.id, name: call.name, result: compactToolResult(ran.result), ...(dataUrl ? { dataUrl } : {}) });
+      results.push({ id: call.id, name: call.name, result: compact, ...(dataUrl ? { dataUrl } : {}) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       row.settle(message, false);
+      block.steps.push({ name: call.name, arguments: call.arguments, result: message, ok: false });
       results.push({ id: call.id, name: call.name, result: { error: message } });
     }
+    persistThread();
   }
-  group.setActive(false);
+  timeline.setActive(false);
   bumpThinking();
   return results;
 }
@@ -511,7 +570,7 @@ function renderModelMenu(): void {
     option.role = 'option';
     option.setAttribute('aria-selected', model.id === selected ? 'true' : 'false');
     option.dataset.model = model.id;
-    option.innerHTML = `<span class="agent-model-option-label">${escapeHtml(model.label)}</span>${model.id === selected ? '<span class="agent-model-check" aria-hidden="true">\u2713</span>' : ''}`;
+    option.innerHTML = `<span class="agent-model-option-copy"><span class="agent-model-option-label">${escapeHtml(model.label)}</span><span class="agent-model-option-hint">${escapeHtml(model.hint)}</span></span>${model.id === selected ? '<span class="agent-model-check" aria-hidden="true">\u2713</span>' : ''}`;
     option.addEventListener('click', () => {
       persistModel(model.id);
       renderModelMenu();
@@ -674,6 +733,7 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
     turn.images = images;
     selection = captureCanvasContext();
     turn.contextLabel = selectionLabel(selection);
+    turn.blocks = [];
     paintUserBubble(turn);
   } else {
     const snapshot = store.captureSnapshot();
@@ -684,6 +744,7 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
       images,
       contextLabel: selectionLabel(selection),
       snapshot,
+      blocks: [],
       root: document.createElement('div'),
       userNode: document.createElement('div'),
     };
@@ -694,6 +755,7 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
     turn.root.append(turn.userNode);
     thread.append(turn.root);
     chatTurns.push(turn);
+    persistThread();
     staged = [];
     renderAttachments();
     input.value = '';
@@ -713,8 +775,10 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
   const appendReply = (text: string, reasoning?: string) => {
     if (!text.trim() && !reasoning?.trim()) return;
     const duration = Math.round((Date.now() - startedAt) / 1000);
+    turn.blocks.push({ type: 'reply', text, ...(reasoning ? { reasoning } : {}), durationSec: duration });
     decorateAssistant(turn.root, text, reasoning, duration);
     bumpThinking();
+    persistThread();
   };
 
   try {
@@ -735,7 +799,8 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
     const body = await response.json() as AgentTurnResponse & { error?: string };
     if (!response.ok && !body.turnId) {
       thinking.destroy();
-      turn.root.append(createErrorMessage(userFacingAgentError(body.error, "Couldn't reach the agent.")));
+      const fallback = response.status === 429 ? RATE_LIMIT_MESSAGE : "Couldn't reach the agent.";
+      turn.root.append(createErrorMessage(userFacingAgentError(body.error, fallback)));
       if (response.status !== 429) lockComposer(false);
       return;
     }
@@ -748,8 +813,13 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
 
     let gatewayTurn = body;
     let lastReasoning = body.reasoning ?? '';
+    let timeline: ReturnType<typeof createToolTimeline> | undefined;
     while (gatewayTurn.toolCalls?.length && gatewayTurn.turnId) {
-      const results = await executeCalls(gatewayTurn.toolCalls, autoApprove, turn.root, bumpThinking);
+      if (!timeline) {
+        timeline = createToolTimeline();
+        turn.root.append(timeline.root);
+      }
+      const results = await executeCalls(gatewayTurn.toolCalls, autoApprove, turn.root, bumpThinking, timeline, turn);
       if (gatewayTurn.done) break;
       setAgentLive({ state: 'thinking', label: 'Thinking' });
       bumpThinking();
@@ -783,8 +853,61 @@ async function runTurn(message: string, options: { images?: AgentImage[]; existi
     thinking.destroy();
     setAgentLive({ state: 'idle' });
     sending = false;
+    persistThread();
     await refreshStatus(quota);
   }
+}
+
+function mountPersistedTurn(persisted: PersistedAgentTurn, thread: HTMLElement): ChatTurn {
+  const turn: ChatTurn = {
+    id: persisted.id,
+    message: persisted.message,
+    images: persisted.images ?? [],
+    contextLabel: persisted.contextLabel || '',
+    snapshot: store.captureSnapshot(),
+    blocks: Array.isArray(persisted.blocks) ? persisted.blocks : [],
+    root: document.createElement('div'),
+    userNode: document.createElement('div'),
+  };
+  turn.root.className = 'agent-turn';
+  turn.root.dataset.turnId = turn.id;
+  turn.userNode.className = 'agent-bubble is-user';
+  paintUserBubble(turn);
+  turn.root.append(turn.userNode);
+  for (const block of turn.blocks) {
+    if (block.type === 'tools') {
+      const timeline = createToolTimeline();
+      for (const step of block.steps) {
+        const row = createToolCall(step.name, step.arguments);
+        timeline.body.append(row.root);
+        row.settle(step.result, step.ok);
+      }
+      timeline.setActive(false);
+      turn.root.append(timeline.root);
+    } else {
+      decorateAssistant(turn.root, block.text, block.reasoning, block.durationSec);
+    }
+  }
+  thread.append(turn.root);
+  chatTurns.push(turn);
+  return turn;
+}
+
+async function restoreAgentThread(thread: HTMLElement): Promise<void> {
+  let turns = loadAgentThread();
+  if (!turns.length) {
+    try {
+      const response = await agentFetch('/api/agent/history');
+      if (response.ok) {
+        const body = await response.json() as { messages?: AgentChatMessage[] };
+        turns = threadTurnsFromMessages(body.messages ?? []);
+      }
+    } catch {
+      // Offline or worker restart; an empty thread is fine.
+    }
+  }
+  for (const turn of turns) mountPersistedTurn(turn, thread);
+  if (turns.length) thread.scrollTop = thread.scrollHeight;
 }
 
 export function initAgentPanel(): void {
@@ -822,6 +945,7 @@ export function initAgentPanel(): void {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.chip = chip.id;
+    button.title = chip.label;
     button.textContent = chip.label;
     button.addEventListener('click', () => {
       if (button.disabled) return;
@@ -950,6 +1074,7 @@ export function initAgentPanel(): void {
   });
 
   void refreshStatus(quota);
+  void restoreAgentThread(thread);
   newChat.addEventListener('click', () => {
     if (newChat.disabled) return;
     void startNewChat();

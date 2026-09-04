@@ -23,23 +23,30 @@ import {
 import { createModelContextPolyfill, readBrowserModelContext } from '../src/webmcp';
 import { DESTRUCTIVE_TOOLS, gatewayToolDefinitions, READ_ONLY_TOOLS, responsesToolDefinitions, TOOL_DESCRIPTIONS, TOOL_NAMES, TOOL_SCHEMAS } from '../src/tool-catalog';
 import { parseGatewayOutput, toGatewayMessages } from '../worker/gateway';
-import { AGENT_REQUEST_LIMIT, isLocalRequest, remainingRequests, shouldEnforceRateLimit } from '../worker/limits';
+import { AGENT_REQUEST_LIMIT, isLocalRequest, remainingRequests, RATE_LIMIT_MESSAGE, shouldEnforceRateLimit } from '../worker/limits';
+import { parseAgentThread, rewindMessages, serializeAgentThread, threadTurnsFromMessages } from '../src/persist';
 
 describe('in-page agent protocol', () => {
   test('exposes WebMCP showcase chips and Gateway models', () => {
-    assert.equal(PROMPT_CHIPS.length, 7);
+    assert.equal(PROMPT_CHIPS.length, 3);
+    assert.equal(PROMPT_CHIPS[0]?.label, 'Hello from WebMCP');
+    assert.match(PROMPT_CHIPS[0]?.prompt ?? '', /Hello WebMCP/);
+    assert.match(PROMPT_CHIPS[0]?.prompt ?? '', /create_tree/);
     assert.ok(PROMPT_CHIPS.every((chip) => chip.prompt.length <= MAX_AGENT_MESSAGE));
     assert.ok(PROMPT_CHIPS.some((chip) => chip.prompt.includes('inspect_canvas')));
     assert.ok(PROMPT_CHIPS.some((chip) => chip.prompt.includes('export_design')));
-    assert.equal(DEFAULT_AGENT_MODEL, 'meta/muse-spark-1.3-contributor');
+    assert.equal(DEFAULT_AGENT_MODEL, 'google/gemini-3.8-flash');
     assert.ok(isAllowedModel(DEFAULT_AGENT_MODEL));
-    assert.ok(isAllowedModel('google/gemini-3.8-flash'));
-    assert.equal(AGENT_MODELS.length, 5);
+    assert.ok(isAllowedModel('meta/muse-spark-1.3-contributor'));
+    assert.equal(AGENT_MODELS.length, 2);
     assert.equal(reasoningForModel(DEFAULT_AGENT_MODEL), 'xhigh');
-    assert.equal(reasoningForModel('google/gemini-3.8-flash'), 'xhigh');
-    assert.equal(AGENT_MODELS[0]?.label, 'Muse');
+    assert.equal(reasoningForModel('meta/muse-spark-1.3-contributor'), 'xhigh');
+    assert.equal(AGENT_MODELS[0]?.label, 'Fast');
+    assert.equal(AGENT_MODELS[0]?.id, 'google/gemini-3.8-flash');
     assert.equal(AGENT_MODELS[0]?.vision, true);
-    assert.equal(AGENT_MODELS.find((model) => model.id === 'zai/glm-5.3-fast')?.vision, false);
+    assert.equal(AGENT_MODELS[1]?.label, 'Best');
+    assert.equal(AGENT_MODELS[1]?.id, 'meta/muse-spark-1.3-contributor');
+    assert.equal(AGENT_MODELS[1]?.vision, true);
   });
 
   test('does not lock the agent to a built-in color system over user-requested colors', () => {
@@ -61,6 +68,7 @@ describe('in-page agent protocol', () => {
     assert.equal(images.length, 1);
     assert.equal(images[0]?.name, 'hero.png');
     assert.equal(modelHasVision(DEFAULT_AGENT_MODEL), true);
+    assert.equal(modelHasVision('google/gemini-3.8-flash'), true);
     assert.equal(modelHasVision('zai/glm-5.3-promo-50'), false);
   });
 
@@ -192,6 +200,8 @@ describe('in-page agent protocol', () => {
     assert.equal(shouldEnforceRateLimit(deployed, { ENFORCE_RATE_LIMIT: 'true' }), true);
     assert.equal(shouldEnforceRateLimit(deployed, { ENFORCE_RATE_LIMIT: 'false' }), false);
     assert.equal(AGENT_REQUEST_LIMIT, 5);
+    assert.match(RATE_LIMIT_MESSAGE, /Codex's in-app browser/i);
+    assert.match(RATE_LIMIT_MESSAGE, /unlimited/i);
     assert.equal(remainingRequests(0, false), 5);
     assert.equal(remainingRequests(2, false), 3);
     assert.equal(remainingRequests(5, false), 0);
@@ -322,5 +332,46 @@ describe('agent UI helpers', () => {
     assert.match(html, /<strong>bold<\/strong>/);
     assert.match(html, /agent-md-codeblock/);
     assert.match(html, /data-copy-code/);
+  });
+
+  test('serializes the agent thread without image payloads and hydrates it after reload', () => {
+    const raw = serializeAgentThread([{
+      id: 'turn-1',
+      message: 'Make the hero crimson.',
+      images: [{ name: 'ref.png', dataUrl: 'data:image/png;base64,AAAA', width: 40, height: 20 }],
+      contextLabel: 'Hero Title',
+      blocks: [
+        { type: 'tools', steps: [{ name: 'set_design_text', arguments: { nodeId: 'hero-title', text: 'Ship faster' }, result: '{"id":"hero-title"}', ok: true }] },
+        { type: 'reply', text: 'Updated the headline.', reasoning: 'User asked for crimson copy.', durationSec: 4 },
+      ],
+    }]);
+    assert.equal(raw.includes('data:image/png;base64,AAAA'), false);
+    const turns = parseAgentThread(raw);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.message, 'Make the hero crimson.');
+    assert.equal(turns[0]?.images[0]?.dataUrl, '');
+    assert.equal(turns[0]?.blocks[0]?.type, 'tools');
+    assert.equal(turns[0]?.blocks[1]?.type, 'reply');
+  });
+
+  test('rebuilds chat turns from worker history and can rewind to earlier user turns', () => {
+    const messages = [
+      { role: 'user' as const, content: 'Inspect the canvas.' },
+      { role: 'assistant' as const, content: '', toolCalls: [{ id: 'c1', name: 'inspect_canvas', arguments: {} }] },
+      { role: 'tool' as const, toolCallId: 'c1', content: '{"revision":3}' },
+      { role: 'assistant' as const, content: 'The selected layer is Hero Title.', reasoning: 'Read the tree first.' },
+      { role: 'user' as const, content: 'Now recolor it.' },
+      { role: 'assistant' as const, content: 'Done.' },
+    ];
+    const turns = threadTurnsFromMessages(messages);
+    assert.equal(turns.length, 2);
+    assert.equal(turns[0]?.message, 'Inspect the canvas.');
+    assert.equal(turns[0]?.blocks.some((block) => block.type === 'tools' && block.steps[0]?.name === 'inspect_canvas'), true);
+    assert.equal(turns[0]?.blocks.some((block) => block.type === 'reply' && block.text.includes('Hero Title')), true);
+    assert.equal(turns[1]?.message, 'Now recolor it.');
+    const kept = rewindMessages(messages, 1);
+    assert.equal(kept.filter((message) => message.role === 'user').length, 1);
+    assert.equal(kept.at(-1)?.content, 'The selected layer is Hero Title.');
+    assert.deepEqual(rewindMessages(messages, 0), []);
   });
 });

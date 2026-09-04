@@ -11,11 +11,8 @@ export const MAX_CANVAS_SELECTION = 8;
 export const MAX_LAYER_TEXT = 200;
 
 export const AGENT_MODELS = [
-  { id: 'meta/muse-spark-1.3-contributor', label: 'Muse', hint: 'Sees images', reasoning: 'xhigh', vision: true },
-  { id: 'google/gemini-3.8-flash', label: 'Gemini Flash', hint: 'Sees images', reasoning: 'xhigh', vision: true },
-  { id: 'zai/glm-5.3-fast', label: 'GLM Fast', hint: 'Text only', reasoning: 'high', vision: false },
-  { id: 'zai/glm-5.3-promo-50', label: 'GLM Promo', hint: 'Text only', reasoning: 'high', vision: false },
-  { id: 'minimax/minimax-m3', label: 'MiniMax', hint: 'Sees images', reasoning: 'high', vision: true },
+  { id: 'google/gemini-3.8-flash', label: 'Fast', hint: 'Default', reasoning: 'xhigh', vision: true },
+  { id: 'meta/muse-spark-1.3-contributor', label: 'Best', hint: 'Higher quality', reasoning: 'xhigh', vision: true },
 ] as const;
 
 export const DEFAULT_AGENT_MODEL = AGENT_MODELS[0].id;
@@ -30,7 +27,7 @@ export interface AgentImage {
 }
 
 export function reasoningForModel(model: string): AgentReasoningEffort {
-  return AGENT_MODELS.find((entry) => entry.id === model)?.reasoning ?? 'high';
+  return AGENT_MODELS.find((entry) => entry.id === model)?.reasoning ?? 'xhigh';
 }
 
 export function modelHasVision(model: string): boolean {
@@ -81,39 +78,19 @@ export const AGENT_SYSTEM_PROMPT = [
 
 export const PROMPT_CHIPS = [
   {
-    id: 'inspect',
-    label: 'Inspect',
-    prompt: 'Inspect the canvas with inspect_canvas and tell me the selected layer, revision, and safe next actions.',
+    id: 'hello',
+    label: 'Hello from WebMCP',
+    prompt: 'Inspect the canvas once, then create_tree a greeting card to the right of the Getting Started artboard — do not nest it inside any existing frame. Spec: 360×220 frame, flex-column, gap 12, padding 24, fill #19191b, radius 16, border 1px #2b2b2f. Children: eyebrow WEBMCP (8px, #9ec0ff, letter-spacing 0.12em); title that says exactly Hello WebMCP (28px, weight 700, #f4f4f5); supporting line Built live with 22 WebMCP tools. (12px, #9a9aa2). Use those colors exactly. Do not edit existing layers. Select the new card when done.',
   },
   {
-    id: 'tree',
-    label: 'Outline',
-    prompt: 'Call get_design_tree on the selected artboard and summarize the layer structure in a short outline.',
-  },
-  {
-    id: 'color',
-    label: 'Color',
-    prompt: 'Find the Hero Title layer and set its text color to crimson #dc2626. Do not use navy or slate.',
-  },
-  {
-    id: 'headline',
-    label: 'Headline',
-    prompt: 'Use inspect_canvas, then set_design_text on the main headline so it is clearer and more trustworthy without changing the product story.',
+    id: 'crimson',
+    label: 'Restyle hero',
+    prompt: 'Find the Hero Title layer. Set its text to Hello from WebMCP and color it crimson #dc2626 at a stronger size. Do not use navy or slate.',
   },
   {
     id: 'export',
-    label: 'Export',
-    prompt: 'Inspect the canvas, then export_design as SVG and report the filename, revision, dimensions, and checksum.',
-  },
-  {
-    id: 'reference',
-    label: 'Recreate',
-    prompt: 'Call list_reference_images. If one exists, inspect_reference_image and recreate_from_reference as an editable scaffold. If none exist, say so.',
-  },
-  {
-    id: 'undo',
-    label: 'Undo',
-    prompt: 'Call undo_document and report the new revision.',
+    label: 'Export SVG',
+    prompt: 'Inspect the canvas with inspect_canvas, then export_design as SVG and report the filename, revision, dimensions, and checksum.',
   },
 ] as const;
 

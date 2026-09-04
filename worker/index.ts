@@ -4,7 +4,7 @@ import { isKnownTool } from '../src/tool-catalog';
 import { CanvasAgent } from './canvas-agent';
 import type { Env } from './env';
 import { runGateway, vercelGatewayConfigured } from './gateway';
-import { AGENT_REQUEST_LIMIT, shouldEnforceRateLimit, visitorKey } from './limits';
+import { RATE_LIMIT_MESSAGE, shouldEnforceRateLimit, visitorKey } from './limits';
 
 export { CanvasAgent };
 
@@ -87,6 +87,21 @@ async function handleAgent(request: Request, env: Env, pathname: string): Promis
     });
   }
 
+  if (request.method === 'GET' && pathname === '/api/agent/history') {
+    const messages = await agent.history();
+    return json({
+      messages: messages.map((message) => ({
+        ...message,
+        images: (message.images ?? []).map((image) => ({
+          name: image.name,
+          dataUrl: '',
+          width: image.width,
+          height: image.height,
+        })),
+      })),
+    });
+  }
+
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   if (pathname === '/api/agent/chat') {
@@ -94,7 +109,7 @@ async function handleAgent(request: Request, env: Env, pathname: string): Promis
     const message = sanitizeUserMessage(body.message);
     const model = typeof body.model === 'string' && isAllowedModel(body.model) ? body.model : DEFAULT_AGENT_MODEL;
     const images = sanitizeAgentImages(body.images);
-    if (images.length && !modelHasVision(model)) return json({ error: 'This model cannot see images. Switch to Muse, Gemini Flash, or MiniMax.' }, 400);
+    if (images.length && !modelHasVision(model)) return json({ error: 'This mode cannot see images. Switch to Fast or Best.' }, 400);
     if (!message && !images.length) return json({ error: 'Type a prompt or attach a reference image.' }, 400);
 
     const selection = sanitizeCanvasContext(body.selection);
@@ -111,7 +126,7 @@ async function handleAgent(request: Request, env: Env, pathname: string): Promis
       const burst = await env.CHAT_LIMIT.limit({ key: visitorKey(request) });
       if (!burst.success) {
         const status = await agent.status(unlimited);
-        return json({ error: `Too many attempts. This chat allows ${AGENT_REQUEST_LIMIT} requests.`, remaining: status.remaining, unlimited: false }, 429);
+        return json({ error: RATE_LIMIT_MESSAGE, remaining: status.remaining, unlimited: false }, 429);
       }
     }
     const started = await agent.startTurn(model, [userMessage], unlimited, replay);
@@ -222,6 +237,13 @@ async function handleAgent(request: Request, env: Env, pathname: string): Promis
     await agent.resetChat();
     const status = await agent.status(unlimited);
     return json({ ok: true, remaining: status.remaining, used: status.used, unlimited: status.unlimited });
+  }
+
+  if (pathname === '/api/agent/rewind') {
+    const body = await readJson(request);
+    const userTurns = typeof body.userTurns === 'number' && Number.isFinite(body.userTurns) ? body.userTurns : 0;
+    await agent.rewindToUserTurns(userTurns);
+    return json({ ok: true, userTurns: Math.max(0, Math.floor(userTurns)) });
   }
 
   return json({ error: 'Not found' }, 404);

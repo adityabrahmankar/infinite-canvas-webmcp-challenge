@@ -1,5 +1,7 @@
 export const AGENT_REQUEST_LIMIT = 5;
 
+export const RATE_LIMIT_MESSAGE = `This chat allows ${AGENT_REQUEST_LIMIT} requests. Open this page in Codex's in-app browser for unlimited usage.`;
+
 export function remainingRequests(usedCount: number, unlimited: boolean, limit = AGENT_REQUEST_LIMIT): number {
   if (unlimited) return 999;
   return Math.max(0, limit - Math.max(0, usedCount));

@@ -32,6 +32,7 @@ import {
 } from '../src/compiler';
 import { store } from '../src/store';
 import { TOOL_NAMES, TOOL_SCHEMAS } from '../src/webmcp';
+import { mergeDocumentImages, parsePersistedDocument, serializePersistedDocument, splitDocumentImages } from '../src/persist';
 
 beforeEach(() => resetDocument());
 
@@ -494,5 +495,31 @@ describe('Infinite Canvas WebMCP surface', () => {
     assert.equal(structured.height, Math.round(bounds.height));
     assert.match(decodeURIComponent(structured.dataUrl), new RegExp(`width="${Math.round(bounds.width)}"`));
     assert.match(decodeURIComponent(structured.dataUrl), new RegExp(`height="${Math.round(bounds.height)}"`));
+  });
+
+  test('keeps image payloads out of the persisted document JSON so canvas edits survive reload', () => {
+    addReferenceImage({ name: 'mood.png', dataUrl: 'data:image/png;base64,AAAA', width: 320, height: 240 });
+    const { nodes, images } = splitDocumentImages([...store.nodes.values()]);
+    assert.equal(Object.keys(images).length, 1);
+    assert.ok(Object.values(images)[0]?.startsWith('data:image/png'));
+    assert.equal(nodes.some((node) => !!node.imageSrc), false);
+    const raw = serializePersistedDocument({
+      nodes: [...store.nodes.values()],
+      rootIds: [...store.rootIds],
+      revision: store.revision,
+    });
+    assert.equal(raw.includes('data:image/png;base64,AAAA'), false);
+    const parsed = parsePersistedDocument(raw);
+    assert.ok(parsed);
+    const restored = mergeDocumentImages(parsed.nodes, images);
+    assert.equal(restored.some((node) => node.imageSrc === 'data:image/png;base64,AAAA'), true);
+    assert.equal(store.getNode('hero-title')?.text, 'Design with an agent. Keep the final say.');
+    setDesignText({ nodeId: 'hero-title', text: 'Saved after reload.' });
+    const afterEdit = parsePersistedDocument(serializePersistedDocument({
+      nodes: [...store.nodes.values()],
+      rootIds: [...store.rootIds],
+      revision: store.revision,
+    }));
+    assert.equal(afterEdit?.nodes.find((node) => node.id === 'hero-title')?.text, 'Saved after reload.');
   });
 });

@@ -1,8 +1,9 @@
 import { Agent } from 'agents';
 import type { AgentChatMessage } from '../src/agent-protocol';
 import { MAX_AGENT_STEPS, sanitizeConversationHistory } from '../src/agent-protocol';
+import { rewindMessages } from '../src/persist';
 import type { Env } from './env';
-import { AGENT_REQUEST_LIMIT, remainingRequests } from './limits';
+import { AGENT_REQUEST_LIMIT, RATE_LIMIT_MESSAGE, remainingRequests } from './limits';
 
 export interface CanvasAgentState {
   usedCount: number;
@@ -49,7 +50,7 @@ export class CanvasAgent extends Agent<Env, CanvasAgentState> {
   ): Promise<{ ok: true; turnId: string; step: number; allMessages: AgentChatMessage[] } | { ok: false; error: string; remaining: number }> {
     const usedCount = usedCountOf(this.state);
     if (!unlimited && usedCount >= AGENT_REQUEST_LIMIT) {
-      return { ok: false, error: `This visitor already used the ${AGENT_REQUEST_LIMIT} agent requests.`, remaining: 0 };
+      return { ok: false, error: RATE_LIMIT_MESSAGE, remaining: 0 };
     }
     const turnId = crypto.randomUUID();
     const history = replay ? [] : sanitizeConversationHistory(this.state.messages || [], 20);
@@ -97,5 +98,19 @@ export class CanvasAgent extends Agent<Env, CanvasAgentState> {
     const step = this.state.step + 1;
     this.setState({ ...this.state, step, messages });
     return { ok: true, step };
+  }
+
+  async history(): Promise<AgentChatMessage[]> {
+    return this.state.messages || [];
+  }
+
+  async rewindToUserTurns(userTurns: number): Promise<void> {
+    this.setState({
+      usedCount: usedCountOf(this.state),
+      turnId: '',
+      step: 0,
+      model: this.state.model || '',
+      messages: rewindMessages(this.state.messages || [], userTurns),
+    });
   }
 }

@@ -152,6 +152,7 @@
             </div>
           </div>
           <div id="agent-chips" class="agent-chips" aria-label="Prompts"></div>
+          <p id="agent-quota-hint" class="agent-quota-hint" hidden></p>
           <form id="agent-composer" class="agent-composer" data-slot="composer">
             <div id="agent-dropzone" class="agent-composer-shell" data-slot="composer-bar">
               <div id="agent-attachments" class="agent-attachments" data-slot="composer-attachments" hidden></div>
@@ -164,11 +165,11 @@
                 <div class="agent-composer-actions" data-slot="composer-actions">
                   <div class="agent-model-picker" id="agent-model-picker">
                     <input id="agent-model" type="hidden" />
-                    <button type="button" id="agent-model-button" class="agent-model-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose model">
-                      <span id="agent-model-label">Muse</span>
+                    <button type="button" id="agent-model-button" class="agent-model-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose mode">
+                      <span id="agent-model-label">Fast</span>
                       <span class="agent-model-caret" aria-hidden="true">▾</span>
                     </button>
-                    <ul id="agent-model-menu" class="agent-model-menu" hidden role="listbox" aria-label="Models"></ul>
+                    <ul id="agent-model-menu" class="agent-model-menu" hidden role="listbox" aria-label="Modes"></ul>
                   </div>
                   <button id="agent-send" type="submit" data-slot="composer-send" aria-label="Send">↑</button>
                 </div>

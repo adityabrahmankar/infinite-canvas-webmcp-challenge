@@ -1,4 +1,5 @@
 import { borderWidthOf, computeLayoutBounds, isFlexLayout, isRowLayout } from './layout';
+import { clearDocumentImages, loadDocumentImages, loadPersistedDocument, mergeDocumentImages, savePersistedDocument } from './persist';
 import type { DesignNode, DocumentSnapshot, LayoutBounds, LayoutMode, NodeKind, NodeStyle, SetLayoutInput, SizingMode, TreeNodeInput } from './types';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -16,38 +17,6 @@ function makeNode(
   text?: string,
 ): DesignNode {
   return { id, name, kind, parentId, children: [], x, y, width, height, style, ...(text === undefined ? {} : { text }) };
-}
-
-const STORAGE_KEY = 'infinite-canvas-doc-v3';
-
-interface PersistedDocument {
-  nodes: DesignNode[];
-  rootIds: string[];
-  revision?: number;
-}
-
-function loadPersistedDocument(): PersistedDocument | null {
-  if (typeof window === 'undefined' || !window.localStorage) return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as PersistedDocument;
-    if (Array.isArray(parsed.nodes) && Array.isArray(parsed.rootIds)) {
-      return parsed;
-    }
-  } catch {
-    // storage unavailable or invalid JSON
-  }
-  return null;
-}
-
-function savePersistedDocument(doc: PersistedDocument): void {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
-  } catch {
-    // ignore quota or private mode errors
-  }
 }
 
 function seedDocument(): { nodes: DesignNode[]; rootIds: string[] } {
@@ -480,9 +449,24 @@ export class ChallengeStore {
       this.suppressHistory = false;
       this.runtimeBounds.clear();
       this.layoutCache = null;
+      void this.hydratePersistedImages();
     } else {
       this.reset();
     }
+  }
+
+  async hydratePersistedImages(): Promise<void> {
+    const images = await loadDocumentImages();
+    if (!Object.keys(images).length) return;
+    const merged = mergeDocumentImages([...this.nodes.values()], images);
+    let changed = false;
+    for (const node of merged) {
+      const current = this.nodes.get(node.id);
+      if (!current || current.imageSrc === node.imageSrc) continue;
+      current.imageSrc = node.imageSrc;
+      changed = true;
+    }
+    if (changed) this.emit();
   }
 
   subscribe(listener: () => void): () => void {
@@ -515,6 +499,7 @@ export class ChallengeStore {
     this.suppressHistory = false;
     this.runtimeBounds.clear();
     this.layoutCache = null;
+    void clearDocumentImages();
     this.emit();
   }
 
