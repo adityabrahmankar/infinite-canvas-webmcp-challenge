@@ -1,0 +1,8 @@
+node_modules/
+.pnpm-store/
+dist/
+.wrangler/
+.playwright-cli/
+.dev.vars
+*.local
+.DS_Store
