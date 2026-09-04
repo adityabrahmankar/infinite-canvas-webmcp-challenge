@@ -10,17 +10,21 @@ The public page registers 22 focused tools through `document.modelContext.regist
 
 - `inspect_canvas`
 - `get_design_tree`
+- `find_nodes`
 - `set_design_text`
 - `apply_design_styles`
+- `set_layout`
 - `add_reference_image`
 - `list_reference_images`
 - `inspect_reference_image`
 - `recreate_from_reference`
 - `create_node`
+- `create_tree`
 - `delete_nodes`
 - `move_nodes`
 - `resize_node`
 - `select_nodes`
+- `capture_preview`
 - `undo_document`
 - `redo_document`
 - `import_project`
@@ -37,7 +41,7 @@ Drop an image onto the canvas, click the reference-image button, or paste an ima
 
 The left AST layer tree is interactive: use the chevron on any row with children to collapse or expand that subtree, or use the Layers heading button to collapse/expand every subtree at once. Collapsing only hides tree rows; it never changes the canvas document or the selected layer. Reset restores the seed and expands every subtree. The small theme button in the header switches between the dark “Graphite” chrome and a light “Paper” chrome; the authored design colors remain intact in both themes.
 
-The Agents tab is an in-page browser agent. Cloudflare hosts the Worker (free) and keeps session/quota state. Inference goes through **Vercel AI Gateway**. The default is discounted `meta/muse-spark-1.3-contributor` at max reasoning (`xhigh`); Gemini 3.8 Flash is the high-reasoning alternative, with GLM 5.3 Fast, GLM 5.3 Promo, and MiniMax M3 also in the picker. Attach reference images with the composer `+` button, paste, or drop — they appear as chips, land on the canvas, and go to vision models (Muse, Gemini Flash, MiniMax). GLM stays text-only; attaching an image switches back to Muse. Each send includes the live canvas selection (ids, names, text, bounds) so the model already knows what is selected. Local `wrangler dev` is unlimited so you can test output; the deployed Worker still allows **5 requests per visitor**. Destructive tools can require approval unless Auto approve is on.
+The Agents tab is an in-page browser agent. Cloudflare hosts the Worker and keeps session/quota state. Inference goes through **Vercel AI Gateway**. The current picker exposes two configured modes: discounted `meta/muse-spark-1.3-contributor` (vision-capable, default) and `google/gemini-3.8-flash` (vision-capable). Attach reference images with the composer `+` button, paste, or drop — they appear as chips, land on the canvas, and are sent to the selected vision model. Each send includes the live canvas selection (ids, names, text, bounds) so the model already knows what is selected. Local `wrangler dev` is unlimited so you can test output; the deployed Worker still allows **5 requests per visitor**. Destructive tools can require approval unless Auto approve is on.
 
 Set `AI_GATEWAY_API_KEY` in `.dev.vars` for local, and `wrangler secret put AI_GATEWAY_API_KEY` before deploy. Create a key with `npx vercel ai-gateway api-keys create`.
 
@@ -80,6 +84,8 @@ pnpm deploy
 
 The Cloudflare Worker name is `webmcp-challenge`. Do not use the private/current project or its Worker for judging.
 
+Live demo: <https://webmcp-challenge.adityabrahmankar9.workers.dev/>
+
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+Apache License 2.0 — see [LICENSE](./LICENSE) and [NOTICE](./NOTICE). You may use, modify, and redistribute the project, but retain the copyright and attribution notice and link back to the source repository.

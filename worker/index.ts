@@ -184,7 +184,7 @@ async function handleAgent(request: Request, env: Env, pathname: string): Promis
     if (!state) return json({ error: 'This agent turn is closed.', remaining: unlimited ? 999 : 0, unlimited }, 409);
     if (state.step >= MAX_AGENT_STEPS) {
       return json(turnPayload({
-        turnId, text: 'Stopped after the one-request tool budget.', toolCalls: [], remaining: unlimited ? 999 : 0, unlimited, model: state.model, step: state.step, done: true,
+        turnId, text: 'Stopped after the tool loop limit for this request.', toolCalls: [], remaining: unlimited ? 999 : 0, unlimited, model: state.model, step: state.step, done: true,
       }));
     }
 

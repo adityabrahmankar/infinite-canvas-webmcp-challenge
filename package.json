@@ -12,7 +12,7 @@
     "test": "tsx --test test/*.test.ts",
     "deploy": "pnpm run build && pnpm dlx wrangler deploy"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "tsx": "^4.20.5",
     "typescript": "^5.7.3",
