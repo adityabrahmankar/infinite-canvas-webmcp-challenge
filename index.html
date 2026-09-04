@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#19191b" />
+    <title>Infinite Canvas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <script>
+      try {
+        var savedTheme = localStorage.getItem('infinite-canvas-theme');
+        document.documentElement.dataset.theme = savedTheme === 'light' ? 'light' : 'dark';
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #19191b;
+        --panel: #242426;
+        --panel-2: #2b2b2f;
+        --line: rgba(255, 255, 255, .11);
+        --muted: #9a9aa2;
+        --text: #f4f4f5;
+        --blue: #5a94ff;
+        --amber: #efad4d;
+        --sidebar-width: 268px;
+        --inspector-width: 280px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #eef1f7;
+        --panel: #f9fbff;
+        --panel-2: #f1f4f9;
+        --line: rgba(40, 56, 84, .14);
+        --muted: #687791;
+        --text: #1d2a40;
+        --blue: #3468d4;
+        --amber: #bd741c;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+      }
+      #app {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      .sidebar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: var(--sidebar-width);
+        background: rgba(35, 35, 38, .98);
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        z-index: 20;
+      }
+      .inspector {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        width: var(--inspector-width);
+        background: rgba(35, 35, 38, .98);
+        border-left: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        z-index: 20;
+      }
+      .workspace {
+        position: absolute;
+        left: var(--sidebar-width);
+        right: var(--inspector-width);
+        top: 0;
+        bottom: 0;
+        overflow: hidden;
+        background: #1d1d1f;
+      }
+      .canvas-scene {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
+        background-color: #1d1d1f;
+        background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, .10) 1px, transparent 0);
+        background-size: 24px 24px;
+      }
+      .canvas-toolbar {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 25;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(39, 39, 42, .94);
+        border: 1px solid rgba(255, 255, 255, .12);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, .30);
+        border-radius: 10px;
+        padding: 4px 6px;
+      }
+      :root[data-theme="light"] .sidebar,
+      :root[data-theme="light"] .inspector { background: rgba(249, 251, 255, .97); }
+      :root[data-theme="light"] .workspace,
+      :root[data-theme="light"] .canvas-scene { background-color: #eef1f7; background-image: radial-gradient(circle at 1px 1px, rgba(94, 116, 151, .16) 1px, transparent 0); }
+      :root[data-theme="light"] .canvas-toolbar { border-color: rgba(40, 56, 84, .16); background: rgba(249, 251, 255, .92); box-shadow: 0 12px 30px rgba(44, 63, 98, .16); }
+    </style>
+    <link rel="stylesheet" href="/style.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=DM+Sans:wght@100..900&family=JetBrains+Mono:wght@100..800&family=Outfit:wght@100..900&family=Plus+Jakarta+Sans:wght@200..800&family=Space+Grotesk:wght@300..700&family=Sora:wght@100..800&family=Manrope:wght@200..800&family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Playfair+Display:wght@400..900&family=Lora:wght@400..700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar" aria-label="Studio">
+        <div class="brand-row"><span class="brand-mark">✦</span><span>Infinite Canvas</span><button id="theme-toggle" class="icon-button" type="button" title="Switch to light theme" aria-label="Switch to light theme">☼</button></div>
+        <nav class="sidebar-tabs" aria-label="Sidebar views">
+          <button type="button" class="sidebar-tab is-active" data-sidebar-tab="layers">Layers</button>
+          <button type="button" class="sidebar-tab" data-sidebar-tab="agents">Agents</button>
+        </nav>
+        <div id="layers-panel" class="sidebar-panel">
+          <div class="tree-heading"><span>Layers</span><span class="layers-heading-actions"><button id="layers-collapse-all" class="icon-button" type="button" title="Collapse all layers" aria-label="Collapse all layers" aria-pressed="false">⌄</button></span></div>
+          <div id="layers-tree" class="layers-tree"></div>
+        </div>
+        <div id="agents-panel" class="sidebar-panel agents-panel" hidden>
+          <div class="agents-head">
+            <span>Chat</span>
+            <div class="agents-head-meta">
+              <div id="agent-status" class="aui-agent-status" data-slot="agent-status" hidden></div>
+              <span id="agent-quota" class="agents-quota" hidden></span>
+            </div>
+            <button type="button" id="agent-new-chat" class="icon-button" title="New chat" aria-label="New chat">+</button>
+          </div>
+          <div id="agent-thread" class="agent-thread" aria-live="polite">
+            <div class="agent-empty" id="agent-empty">
+              <p class="agent-empty-kicker">Getting Started</p>
+              <p class="agent-empty-copy">22 WebMCP tools register on this page via <code>document.modelContext</code> — native Chrome or the in-page polyfill. Ask here; named colors apply as requested, not swapped for navy or slate.</p>
+            </div>
+          </div>
+          <div id="agent-chips" class="agent-chips" aria-label="Prompts"></div>
+          <form id="agent-composer" class="agent-composer" data-slot="composer">
+            <div id="agent-dropzone" class="agent-composer-shell" data-slot="composer-bar">
+              <div id="agent-attachments" class="agent-attachments" data-slot="composer-attachments" hidden></div>
+              <div id="agent-selection" class="agent-selection" hidden></div>
+              <textarea id="agent-input" rows="1" maxlength="800" placeholder="Ask to inspect, restyle, or export…" aria-label="Message" data-slot="composer-input"></textarea>
+              <div class="agent-composer-toolbar" data-slot="composer-toolbar">
+                <button type="button" id="agent-attach" class="icon-button" data-slot="composer-attach" aria-label="Attach image" title="Attach image">+</button>
+                <input id="agent-attach-input" type="file" accept="image/*" multiple hidden />
+                <label class="agent-auto"><input id="agent-auto-approve" type="checkbox" checked /> Auto</label>
+                <div class="agent-composer-actions" data-slot="composer-actions">
+                  <div class="agent-model-picker" id="agent-model-picker">
+                    <input id="agent-model" type="hidden" />
+                    <button type="button" id="agent-model-button" class="agent-model-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose model">
+                      <span id="agent-model-label">Muse</span>
+                      <span class="agent-model-caret" aria-hidden="true">▾</span>
+                    </button>
+                    <ul id="agent-model-menu" class="agent-model-menu" hidden role="listbox" aria-label="Models"></ul>
+                  </div>
+                  <button id="agent-send" type="submit" data-slot="composer-send" aria-label="Send">↑</button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="sidebar-footer"><span id="webmcp-status" class="webmcp-status"></span></div>
+      </aside>
+
+      <main class="workspace">
+        <div id="canvas-scene" class="canvas-scene" aria-label="Infinite canvas" tabindex="0">
+        <div id="canvas-world" class="canvas-world"></div>
+        <div id="canvas-overlay" class="canvas-overlay" aria-hidden="true"></div>
+        <div id="canvas-agent-orbs" class="canvas-agent-orbs" aria-hidden="true"></div>
+        </div>
+        <div class="canvas-toolbar" id="canvas-tools" aria-label="Canvas toolbar">
+          <button type="button" data-canvas-tool="select" data-tooltip="Select (V)" aria-label="Select" class="is-active">↖</button>
+          <button type="button" data-canvas-tool="hand" data-tooltip="Hand (H)" aria-label="Hand tool">✋</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button type="button" data-canvas-tool="frame" data-tooltip="Frame (F)" aria-label="Frame tool">▭</button>
+          <button type="button" data-canvas-tool="rect" data-tooltip="Rectangle (R)" aria-label="Rectangle tool">□</button>
+          <button type="button" data-canvas-tool="text" data-tooltip="Text (T)" aria-label="Text tool">Aa</button>
+          <button type="button" data-canvas-tool="button" data-tooltip="Button (B)" aria-label="Button tool">⬤</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button id="undo-document" data-tooltip="Undo (⌘Z)" aria-label="Undo last edit">↶</button>
+          <button id="redo-document" data-tooltip="Redo (⇧⌘Z)" aria-label="Redo last edit">↷</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button id="export-toggle" data-tooltip="Export" aria-label="Export design">⇩</button>
+          <button id="open-project" data-tooltip="Open project" aria-label="Open project JSON">▣</button>
+          <button id="add-reference" data-tooltip="Add image" aria-label="Add reference image">▧</button>
+          <button id="reset-document" data-tooltip="Reset" aria-label="Reset document">↺</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button id="delete-selection" data-tooltip="Delete (⌫)" aria-label="Delete selected layers">✕</button>
+        </div>
+        <input id="reference-file-input" type="file" accept="image/*" multiple hidden />
+        <input id="project-file-input" type="file" accept="application/json,.json" hidden />
+      </main>
+
+      <aside class="inspector" aria-label="Inspector">
+        <div class="inspector-top"><span class="inspector-title">Inspector</span><button type="button" class="zoom-label" id="zoom-label" title="Zoom to fit">78%</button></div>
+        <nav class="inspector-tabs" aria-label="Inspector views">
+          <button type="button" class="inspector-tab is-active" data-inspector-tab="styles">Styles</button>
+          <button type="button" class="inspector-tab" data-inspector-tab="code">Code</button>
+        </nav>
+        <div id="inspector-content" class="inspector-content"></div>
+        <div id="inspector-code" class="inspector-code" hidden></div>
+        <div id="export-panel" class="export-panel" hidden></div>
+      </aside>
+      <button type="button" class="panel-resize panel-resize-left" id="sidebar-resize" aria-label="Resize layers panel"></button>
+      <button type="button" class="panel-resize panel-resize-right" id="inspector-resize" aria-label="Resize inspector"></button>
+    </div>
+    <div id="color-picker-popover" class="color-picker-popover" hidden>
+      <div class="color-picker-panel" role="dialog" aria-label="Color picker">
+        <div class="color-picker-header">
+          <span>Color</span>
+          <button type="button" id="color-picker-close" class="color-picker-close" aria-label="Close color picker">×</button>
+        </div>
+        <div class="color-picker-body">
+          <div class="color-picker-sat-val" id="cp-sat-val">
+            <div class="cp-cursor" id="cp-sat-val-cursor"></div>
+          </div>
+          <div class="color-picker-hue-bar" id="cp-hue-bar">
+            <div class="cp-hue-cursor" id="cp-hue-cursor"></div>
+          </div>
+          <div class="color-picker-controls">
+            <span class="color-preview-lg" id="cp-preview"></span>
+            <input type="text" class="color-hex-input" id="cp-hex-input" spellcheck="false" aria-label="Hex color" />
+          </div>
+          <div class="color-presets" id="cp-presets"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
